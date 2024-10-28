@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HeyGen Avatar Stream Test</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline'; media-src * blob:;">
+    <style>
+        #media-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+            min-height: 500px;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        video {
+            max-width: 640px;
+            background: #000;
+            margin: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+        }
+        #play-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>HeyGen Avatar Stream Test</h1>
+    <button id="play-button">Start Stream</button>
+    <div id="media-container"></div>
+</body>
+</html>

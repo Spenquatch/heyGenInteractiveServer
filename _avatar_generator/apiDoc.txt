@@ -1,0 +1,224 @@
+Streaming API Overview
+The HeyGen Streaming API provides various endpoints to control and interact with interactive avatars. Below is a detailed explanation of the available API endpoints.
+
+1. New Session
+Endpoint: POST https://api.heygen.com/v1/streaming.new
+
+Description: This endpoint is used to initiate a new streaming session with an interactive avatar. It sets up a fresh session, allowing real-time interactions and communication with the avatar.
+
+Additional Text (from above Request Body):
+
+The quality of the data to be retrieved can be configured to high, medium, or low.
+If an avatar_id is not provided, the default avatar will be selected.
+Voice settings and emotions are customizable for the avatar.
+Request Body:
+
+quality (string): Quality of the session data (values: "high", "medium", "low").
+high: 1080p, medium: 720p, low: 480p.
+avatar_id (string, optional): ID of the avatar to use; a default one will be selected if not provided.
+voice (VoiceSetting object, optional): Settings for the avatar's voice.
+video_encoding (string, optional): Encoding format for the video stream ("H264" or "VP8"). Default is "VP8".
+knowledge_base (string, optional): Knowledge base prompt used for chat tasks.
+version (string, optional): Specifies the API version. Default is V1.
+knowledge_base_id (string, optional, beta): ID of the knowledge base (only applicable for V2).
+VoiceSetting Fields:
+
+voice_name (string, optional): Name of the avatar’s voice.
+rate (float, optional): Voice speed rate (default is 1).
+emotion (string, optional): Emotion for the avatar's speech. Available emotions: Excited, Serious, Friendly, Soothing, Broadcaster.
+Response Body:
+
+code (integer): Response code (e.g., 100 for success).
+message (string): Response message.
+data (object): Contains the response data.
+data.ice_servers (array): List of ICE servers.
+data.sdp (object): Session Description Protocol (SDP) data.
+data.session_id (string): ID of the session.
+Example (Shell):
+
+bash
+Copy code
+curl --request POST \
+  --url https://api.heygen.com/v1/streaming.new \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "quality": "medium",
+    "avatar_id": "AVATAR_ID",
+    "voice": {
+      "voice_name": "Emma",
+      "rate": 1.2,
+      "emotion": "Friendly"
+    },
+    "video_encoding": "VP8"
+  }'
+2. Start Session
+Endpoint: POST https://api.heygen.com/v1/streaming.start
+
+Description: This endpoint is used to start an existing session and establish a connection between the client and the avatar. It enables communication and interaction during the session.
+
+Additional Text:
+
+You will need to provide the Session Description Protocol (SDP) data, which helps to establish the connection.
+Request Body:
+
+session_id (string): ID of the session to start.
+sdp (object): SDP data for establishing the connection.
+sdp.type (string): Type of SDP, default is "offer".
+sdp.sdp (string): SDP string with connection information.
+Response Body:
+
+status (string): Response status message.
+Example (Shell):
+
+bash
+Copy code
+curl --request POST \
+  --url https://api.heygen.com/v1/streaming.start \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "session_id": "SESSION_ID",
+    "sdp": {
+      "type": "offer",
+      "sdp": "SDP_DATA"
+    }
+  }'
+3. Submit ICE Information
+Endpoint: POST https://api.heygen.com/v1/streaming.ice
+
+Description: Sends an ICE (Interactive Connectivity Establishment) candidate to the server. This step is part of establishing peer-to-peer media connections for streaming.
+
+Additional Text:
+
+ICE candidates help the streaming session find the best route for the connection between the server and the client.
+Request Body:
+
+session_id (string): ID of the session.
+candidate (object): ICE candidate object.
+candidate.candidate (string): ICE candidate string.
+candidate.sdpMid (string): Media stream identification.
+candidate.sdpMLineIndex (integer): Index of the m-line in the SDP.
+candidate.usernameFragment (string): ICE username fragment.
+Response Body:
+
+status (string): Success message if ICE candidate is successfully sent.
+Example (Shell):
+
+bash
+Copy code
+curl --request POST \
+  --url https://api.heygen.com/v1/streaming.ice \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "session_id": "SESSION_ID",
+    "candidate": {
+      "candidate": "CANDIDATE",
+      "sdpMid": "0",
+      "sdpMLineIndex": 0,
+      "usernameFragment": "USERNAME_FRAGMENT"
+    }
+  }'
+4. Send Task
+Endpoint: POST https://api.heygen.com/v1/streaming.task
+
+Description: This endpoint is used to send text for an avatar to speak in the current session.
+
+Additional Text:
+
+You can either have the avatar speak the text directly ("repeat") or let the avatar respond using its knowledge base ("chat").
+Request Body:
+
+session_id (string): ID of the session.
+text (string): Text to be spoken by the avatar.
+task_mode (string): Whether the task is synchronous ("sync") or asynchronous ("async"). Default is sync.
+task_type (string): Task type ("repeat" or "chat").
+Response Body:
+
+duration_ms (float): Duration of avatar’s speech.
+task_id (string): Task ID.
+Example (Shell):
+
+bash
+Copy code
+curl --request POST \
+  --url https://api.heygen.com/v1/streaming.task \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "session_id": "SESSION_ID",
+    "text": "Hello, welcome to the meeting!",
+    "task_mode": "sync",
+    "task_type": "repeat"
+  }'
+5. List Sessions
+Endpoint: GET https://api.heygen.com/v1/streaming.list
+
+Description: Retrieves a list of active streaming sessions, including their IDs and status.
+
+Response Body:
+
+sessions (array): Array of active sessions.
+sessions[session_id] (string): Unique session ID.
+sessions[status] (string): Status of the session (e.g., new, connected).
+sessions[created_at] (number): Creation time in Unix timestamp.
+Example (Shell):
+
+bash
+Copy code
+curl --request GET \
+  --url https://api.heygen.com/v1/streaming.list \
+  --header 'accept: application/json' \
+  --header 'x-api-key: YOUR_API_KEY'
+6. Close Session
+Endpoint: POST https://api.heygen.com/v1/streaming.stop
+
+Description: Terminates an active session by stopping the avatar interaction.
+
+Request Body:
+
+session_id (string): ID of the session to stop.
+Response Body:
+
+status (string): Success message.
+Example (Shell):
+
+bash
+Copy code
+curl --request POST \
+  --url https://api.heygen.com/v1/streaming.stop \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "session_id": "SESSION_ID"
+  }'
+7. Interrupt Task
+Endpoint: POST https://api.heygen.com/v1/streaming.interrupt
+
+Description: Interrupts the avatar's speech during an active session. If the avatar is not speaking at the time, the interrupt will have no effect.
+
+Request Body:
+
+session_id (string): ID of the session.
+**
+
+
+8. Create session token
+post
+https://api.heygen.com/v1/streaming.create_token
+This endpoint is used to generate a new access token for a streaming session.
+
+Log in to see full request history
+time	status	user agent	
+Make a request to see history.
+0 Requests This Month
+
+📘
+You need to generate a new access token for each streaming session. Each session must have a unique token.
+
+Response Body
+Field	Type	Description
+error	integer	The error information, if any. null if no error.
+data	object	Contains the result data.
+data.token	string	The generated access token for the streaming session.
