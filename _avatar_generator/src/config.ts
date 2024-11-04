@@ -150,7 +150,7 @@ export const config = convict({
         apiKey: {
           doc: 'Heygen API key',
           format: String,
-          default: 'ZWViYTUwMDUwY2NiNDA1Njg3MjM3NjgxNmYyMzc1OWItMTcyOTE3NDE4OA==',
+          default: 'Yjc5ZDg1YTBjZWI2NDgyODlhN2QxOTY3MGY3OWI2NWItMTcxNjc3MjkxMQ==',
           env: 'HEYGEN_API_KEY'
         },
         avatarId: {

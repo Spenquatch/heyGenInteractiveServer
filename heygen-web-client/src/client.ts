@@ -5,6 +5,53 @@ interface ErrorResponse {
   error: string;
 }
 
+// Add these helper functions at the top of your client.ts file
+function updateDebugInfo(info: string) {
+    const debugElement = document.getElementById('debug-info');
+    if (debugElement) {
+        const timestamp = new Date().toISOString();
+        debugElement.textContent = `${timestamp}: ${info}\n${debugElement.textContent}`;
+    }
+}
+
+function logTrackInfo(track: MediaStreamTrack) {
+    const settings = track.getSettings();
+    let trackInfo: any = {
+        trackId: track.id,
+        kind: track.kind,
+        enabled: track.enabled,
+        readyState: track.readyState,
+        muted: track.muted,
+        settings
+    };
+
+    // Only add capabilities if the browser supports it
+    try {
+        if (typeof track.getCapabilities === 'function') {
+            trackInfo = {
+                ...trackInfo,
+                capabilities: track.getCapabilities()
+            };
+        }
+    } catch (e) {
+        console.log('Browser does not support getCapabilities');
+    }
+
+    // Only add constraints if the browser supports it
+    try {
+        if (typeof track.getConstraints === 'function') {
+            trackInfo = {
+                ...trackInfo,
+                constraints: track.getConstraints()
+            };
+        }
+    } catch (e) {
+        console.log('Browser does not support getConstraints');
+    }
+    
+    updateDebugInfo(JSON.stringify(trackInfo, null, 2));
+}
+
 class HeygenClient {
   private device: mediasoupClient.Device;
   private socket: Socket = io('http://localhost:3000');
@@ -123,10 +170,56 @@ class HeygenClient {
       return;
     }
 
+    // Use the TURN servers from HeyGen's response
+    transportOptions.iceServers = [
+      {
+        urls: ['stun:stun.l.google.com:19302']
+      },
+      {
+        urls: ['stun:global.stun.twilio.com:3478']
+      },
+      {
+        urls: ['turn:global.turn.twilio.com:3478?transport=udp'],
+        username: '87d09d5d38717b7b560932cd4c8730eb49b57c6a207063d6ae13f70b564748f1',
+        credential: '8hhw76y2Z2wz39cI5xNgbNilynuX5krTsCCc5zZPGrE='
+      },
+      {
+        urls: ['turn:global.turn.twilio.com:3478?transport=tcp'],
+        username: '87d09d5d38717b7b560932cd4c8730eb49b57c6a207063d6ae13f70b564748f1',
+        credential: '8hhw76y2Z2wz39cI5xNgbNilynuX5krTsCCc5zZPGrE='
+      },
+      {
+        urls: ['turn:global.turn.twilio.com:443?transport=tcp'],
+        username: '87d09d5d38717b7b560932cd4c8730eb49b57c6a207063d6ae13f70b564748f1',
+        credential: '8hhw76y2Z2wz39cI5xNgbNilynuX5krTsCCc5zZPGrE='
+      }
+    ];
+
     this.transport = this.device.createRecvTransport(transportOptions);
+
+    // Add more detailed ICE connection monitoring
+    if ((this.transport as any).iceGatheringState !== undefined) {
+        console.log('ICE gathering state:', (this.transport as any).iceGatheringState);
+        (this.transport as any).oniceconnectionstatechange = () => {
+            const state = (this.transport as any).iceConnectionState;
+            console.log('ICE connection state changed:', state);
+            updateDebugInfo(`ICE connection state: ${state}`);
+        };
+        (this.transport as any).onicegatheringstatechange = () => {
+            const state = (this.transport as any).iceGatheringState;
+            console.log('ICE gathering state changed:', state);
+            updateDebugInfo(`ICE gathering state: ${state}`);
+        };
+        (this.transport as any).onconnectionstatechange = () => {
+            const state = (this.transport as any).connectionState;
+            console.log('Connection state changed:', state);
+            updateDebugInfo(`Connection state: ${state}`);
+        };
+    }
 
     this.transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
       try {
+        console.log('Transport connect event, dtlsParameters:', dtlsParameters);
         await new Promise<void>((resolve, reject) => {
           this.socket.emit(
             'transportConnect',
@@ -136,8 +229,10 @@ class HeygenClient {
             },
             ({ error }: ErrorResponse) => {
               if (error) {
+                console.error('Transport connect error:', error);
                 reject(error);
               } else {
+                console.log('Transport connected successfully');
                 resolve();
               }
             }
@@ -145,6 +240,7 @@ class HeygenClient {
         });
         callback();
       } catch (error) {
+        console.error('Transport connect error:', error);
         errback(error as Error);
       }
     });
@@ -270,144 +366,91 @@ class HeygenClient {
 
   private attachMediaToElement(consumer: mediasoupClient.types.Consumer): HTMLElement {
     console.log(`Attaching ${consumer.kind} track to element`);
+    updateDebugInfo(`Attaching ${consumer.kind} track to element`);
     
     const mediaElement = document.createElement(consumer.kind === 'video' ? 'video' : 'audio');
     const stream = new MediaStream([consumer.track]);
     
-    mediaElement.id = consumer.id;
+    mediaElement.id = `media-${consumer.id}`;
+    mediaElement.style.border = '2px solid red'; // Visual indicator
     
     if (consumer.kind === 'video') {
         const videoElement = mediaElement as HTMLVideoElement;
-        
-        // Set attributes before setting srcObject
         videoElement.autoplay = true;
         videoElement.playsInline = true;
         videoElement.muted = true;
         videoElement.controls = true;
-        videoElement.style.width = '100%';
-        videoElement.style.maxWidth = '640px';
-        videoElement.style.backgroundColor = 'black';
         
-        // Add all event listeners before setting srcObject
+        // Add detailed event listeners
         videoElement.addEventListener('loadedmetadata', () => {
-            console.log('Video loadedmetadata event', {
-                readyState: videoElement.readyState,
-                videoWidth: videoElement.videoWidth,
-                videoHeight: videoElement.videoHeight
-            });
-            videoElement.play()
-                .then(() => console.log('Video playback started successfully'))
-                .catch(e => console.error('Video play failed:', e));
-        });
-        
-        videoElement.addEventListener('canplay', () => {
-            console.log('Video canplay event');
-            if (videoElement.paused) {
-                videoElement.play()
-                    .then(() => console.log('Video play on canplay successful'))
-                    .catch(e => console.error('Video play on canplay failed:', e));
-            }
+            updateDebugInfo(`Video loadedmetadata: ${videoElement.videoWidth}x${videoElement.videoHeight}`);
         });
         
         videoElement.addEventListener('playing', () => {
-            console.log('Video playing event', {
-                time: videoElement.currentTime,
-                dimensions: `${videoElement.videoWidth}x${videoElement.videoHeight}`,
-                paused: videoElement.paused,
-                ended: videoElement.ended,
-                readyState: videoElement.readyState
-            });
+            updateDebugInfo(`Video playing: ${videoElement.videoWidth}x${videoElement.videoHeight}`);
         });
         
-        // Add more detailed error handling
         videoElement.addEventListener('error', () => {
             const error = videoElement.error;
-            console.error('Video element error:', {
-                code: error?.code,
-                message: error?.message
-            });
+            updateDebugInfo(`Video error: ${error?.code} - ${error?.message}`);
         });
-
-        videoElement.addEventListener('stalled', () => {
-            console.log('Video stalled event - attempting to resume');
-            videoElement.play()
-                .catch(e => console.error('Failed to resume after stall:', e));
-        });
-
-        videoElement.addEventListener('waiting', () => {
-            console.log('Video waiting event');
-            // Key frame request removed
-        });
-        
-        // Set srcObject and handle potential errors
-        try {
-            videoElement.srcObject = stream;
-        } catch (e) {
-            console.error('Failed to set srcObject:', e);
-        }
         
         // Monitor track state changes
-        consumer.track.onended = async () => {
-            console.log('Track ended - attempting to restart');
-            try {
-                await consumer.resume();
-            } catch (e) {
-                console.error('Failed to resume consumer:', e);
-            }
+        consumer.track.onended = () => {
+            updateDebugInfo(`Track ended: ${consumer.id}`);
         };
         
-        consumer.track.onmute = async () => {
-            console.log('Track muted - attempting to unmute');
-            try {
-                await consumer.resume();
-            } catch (e) {
-                console.error('Failed to resume consumer:', e);
-            }
+        consumer.track.onmute = () => {
+            updateDebugInfo(`Track muted: ${consumer.id}`);
         };
         
         consumer.track.onunmute = () => {
-            console.log('Track unmuted');
-            if (videoElement.paused) {
-                videoElement.play()
-                    .catch(e => console.error('Failed to play after unmute:', e));
-            }
+            updateDebugInfo(`Track unmuted: ${consumer.id}`);
         };
         
-        // Add consumer event handlers
-        consumer.on('transportclose', () => {
-            console.log('Consumer transport closed');
-        });
-        
-        consumer.on('trackended', () => {
-            console.log('Consumer track ended');
-        });
-        
-        // Force a play attempt with timeout
-        const playAttempts = [100, 500, 1000, 2000];
-        playAttempts.forEach(delay => {
-            setTimeout(() => {
-                if (videoElement.paused) {
-                    console.log(`Attempting delayed play (${delay}ms)...`);
-                    videoElement.play()
-                        .then(() => console.log(`Delayed play successful (${delay}ms)`))
-                        .catch(e => console.error(`Delayed play failed (${delay}ms):`, e));
-                }
-            }, delay);
-        });
-        
-        // Log stream and track information
-        console.log('Video stream tracks:', stream.getTracks());
-        console.log('Video track enabled:', consumer.track.enabled);
-        console.log('Video track readyState:', consumer.track.readyState);
-        console.log('Video track settings:', consumer.track.getSettings());
-        
-    } else {
-        // For audio elements
-        const audioElement = mediaElement as HTMLAudioElement;
-        audioElement.autoplay = true;
-        audioElement.controls = true;
-        audioElement.srcObject = stream;
+        // Log detailed track information
+        logTrackInfo(consumer.track);
     }
+    
+    try {
+        mediaElement.srcObject = stream;
+        updateDebugInfo(`srcObject set successfully for ${consumer.kind}`);
+    } catch (e) {
+        updateDebugInfo(`Error setting srcObject: ${e}`);
+        console.error('Failed to set srcObject:', e);
+    }
+    
+    const container = document.getElementById('media-container');
+    if (!container) {
+        updateDebugInfo('Error: Media container not found');
+        throw new Error('Media container not found');
+    }
+    
+    // Clear existing elements of the same kind
+    const existingElements = container.getElementsByTagName(consumer.kind);
+    Array.from(existingElements).forEach(element => {
+        updateDebugInfo(`Removing existing ${consumer.kind} element`);
+        element.remove();
+    });
+    
+    container.appendChild(mediaElement);
+    updateDebugInfo(`Media element appended to container: ${mediaElement.id}`);
+    
+    // Add periodic track status check
+    const statusInterval = setInterval(() => {
+        if (consumer.track) {
+            updateDebugInfo(`Track status check - enabled: ${consumer.track.enabled}, readyState: ${consumer.track.readyState}`);
+        } else {
+            clearInterval(statusInterval);
+            updateDebugInfo('Track no longer available');
+        }
+    }, 1000);
+    
+    // Cleanup interval when track ends
+    consumer.track.onended = () => {
+        clearInterval(statusInterval);
+        updateDebugInfo('Track ended - clearing status check interval');
+    };
     
     return mediaElement;
   }
@@ -417,4 +460,3 @@ class HeygenClient {
 window.addEventListener('load', () => {
   new HeygenClient();
 });
-

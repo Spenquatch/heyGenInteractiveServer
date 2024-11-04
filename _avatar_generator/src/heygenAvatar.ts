@@ -1,6 +1,6 @@
 import axios from 'axios';
 import wrtc from 'wrtc';
-const { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, MediaStream } = wrtc;
+const { RTCPeerConnection, RTCSessionDescription} = wrtc;
 import sdpTransform from 'sdp-transform';
 import { config } from './config';
 import { Logger } from './lib/logger';
@@ -12,6 +12,10 @@ export class HeyGenAvatar {
   private sessionId: string | null = null;
   private peerConnection: RTCPeerConnection | null = null;
   private apiKey: string = config.get('heygen.apiKey');
+  private pendingTracks: Array<{
+    track: MediaStreamTrack;
+    mediaSection: sdpTransform.MediaDescription;
+  }> = [];
 
   
 
@@ -25,7 +29,6 @@ export class HeyGenAvatar {
   public async generateAccessToken() {
     try {
       this.logger.info('Generating HeyGen access token...');
-      const apiKey = config.get('heygen.apiKey');
       const response = await axios.post(
         'https://api.heygen.com/v1/streaming.create_token',
         {},
@@ -70,7 +73,7 @@ export class HeyGenAvatar {
           voice: {
             rate: 1.0,
           },
-          video_encoding: 'VP8',
+          video_encoding: 'vp8',
         },
         {
           headers: {
@@ -91,12 +94,12 @@ export class HeyGenAvatar {
       const iceServers = data.ice_servers2;
   
       // Add debug logging
-        this.logger.info('Received ICE servers:', iceServers);
-        this.logger.info('Received SDP offer:', offerSdp);
-        this.logger.info('SDP type:', data.sdp.type);
+      // this.logger.info('Received ICE servers:', iceServers);
+      // this.logger.info('Received SDP offer:', offerSdp);
+      // this.logger.info('SDP type:', data.sdp.type);
 
-        // Verify ICE server structure
-        if (!Array.isArray(iceServers) || !iceServers.length) {
+      // Verify ICE server structure
+      if (!Array.isArray(iceServers) || !iceServers.length) {
           throw new Error('Invalid or missing ICE servers configuration');
         }
 
@@ -111,48 +114,161 @@ export class HeyGenAvatar {
   
   private async setupPeerConnection(offerSdp: string, iceServers: RTCIceServer[]) {
     try {
-      this.logger.info('Setting up WebRTC peer connection with HeyGen...');
-      const sdp = sdpTransform.parse(offerSdp);
-      this.mediasoupServer.setRemoteSdp(sdp);
+        this.logger.info('Setting up WebRTC peer connection with HeyGen...');
+        const sdp = sdpTransform.parse(offerSdp);
+        this.mediasoupServer.setRemoteSdp(sdp);
+        
+        // Create peer connection with jitter buffer config
+        this.peerConnection = new RTCPeerConnection({
+            iceServers,
+            // Add jitter buffer configuration
+            rtcpMuxPolicy: 'require',
+            bundlePolicy: 'max-bundle',
+            // @ts-ignore - these are experimental but supported
+            jitterBufferMinimumDelay: 0.2,  // 200ms
+            jitterBufferMaximumDelay: 1.0,  // 1000ms
+            jitterBufferPreferredDelay: 0.5  // 500ms
+        }) as RTCPeerConnection;
 
-      this.peerConnection = new RTCPeerConnection({ iceServers }) as RTCPeerConnection;
+        // Connection state monitoring
+        this.peerConnection.onconnectionstatechange = async () => {
+            const state = this.peerConnection?.connectionState;
+            this.logger.info('Connection state changed:', state);
+            
+            switch (state) {
+                case 'connected':
+                    this.logger.info('Connection established - starting RTP monitoring');
+                    // Start periodic RTP stats monitoring
+                    setInterval(() => this.monitorRtpStats(), 5000);
+                    break;
+                case 'disconnected':
+                case 'failed':
+                    this.logger.error(`Connection ${state} - check ICE candidates and network`);
+                    break;
+                case 'closed':
+                    this.logger.info('Connection closed');
+                    break;
+            }
+        };
 
-      this.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          this.sendIceCandidate(event.candidate);
-        }
+        // Add ICE connection state monitoring
+        this.peerConnection.oniceconnectionstatechange = () => {
+            this.logger.info('ICE connection state:', this.peerConnection?.iceConnectionState);
+        };
+
+        // Add ICE gathering state monitoring
+        this.peerConnection.onicegatheringstatechange = () => {
+            this.logger.info('ICE gathering state:', this.peerConnection?.iceGatheringState);
+        };
+
+        // Data channel handling
+        this.peerConnection.ondatachannel = (event) => {
+          const channel = event.channel;
+          this.logger.info('Data channel received:', {
+              label: channel.label,
+              id: channel.id,
+              state: channel.readyState
+          });
+          
+          channel.onmessage = (msg) => {
+              this.logger.info('Data channel message:', {
+                  type: msg.type,
+                  data: msg.data,
+                  timestamp: new Date().toISOString()
+              });
+          };
+          
+          channel.onopen = () => {
+              this.logger.info('Data channel opened:', channel.label);
+              // Send a test message
+              channel.send('Test message from client');
+          };
+          
+          channel.onerror = (error) => {
+              this.logger.error('Data channel error:', error);
+          };
       };
 
-      this.peerConnection.ontrack = (event) => {
-        this.logger.info('Received remote track:', event.track.kind);
-        if (event.track.kind === 'video' || event.track.kind === 'audio') {
-          this.mediasoupServer.receiveTrack(event.track);
-          this.logger.info('Track Data:', event.track);
-        }
-      };
 
-      await this.peerConnection.setRemoteDescription(
-        new RTCSessionDescription({
-          type: 'offer',
-          sdp: offerSdp,
-        })
-      );
-  
+        // ICE candidate handling
+        this.peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                this.sendIceCandidate(event.candidate);
+            }
+        };
 
-      const answer = await this.peerConnection.createAnswer();
-      this.logger.info('Answer:', answer);
-      await this.peerConnection.setLocalDescription(answer);
-      this.logger.info('Local Description:', this.peerConnection.localDescription);
-      await this.startSession(answer.sdp || '');
-      this.logger.info('Session started with HeyGen.');
+        // Track handling with detailed capabilities
+        this.peerConnection.ontrack = (event) => {
+            this.logger.info('Track received:', {
+                kind: event.track.kind,
+                id: event.track.id,
+                label: event.track.label,
+                readyState: event.track.readyState,
+                muted: event.track.muted,
+                enabled: event.track.enabled
+            });
 
-      this.logger.info('WebRTC peer connection established with HeyGen.');
+            // Configure jitter buffer for the track
+            if (event.track.kind === 'audio' || event.track.kind === 'video') {
+                const receiver = this.peerConnection?.getReceivers()
+                    .find(r => r.track.id === event.track.id);
+                
+                if (receiver) {
+                    // @ts-ignore - this is a non-standard but supported property
+                    receiver.jitterBufferDelay = 500; // 500ms
+                    // @ts-ignore
+                    receiver.playoutDelayHint = 500; // 500ms
+                }
+
+                try {
+                    // Single call to receiveTrack
+                    this.mediasoupServer.receiveTrack(event.track);
+                } catch (error) {
+                    this.logger.error(`Failed to handle track: ${error}`);
+                }
+            }
+
+            // Monitor track stats
+            setInterval(async () => {
+                if (event.track.readyState === 'live') {
+                    const stats = await this.peerConnection?.getStats(event.track);
+                    stats?.forEach(report => {
+                        if (report.type === 'inbound-rtp') {
+                            this.logger.info(`${event.track.kind} track stats:`, {
+                                packetsReceived: report.packetsReceived,
+                                bytesReceived: report.bytesReceived,
+                                frameRate: report.framesPerSecond
+                            });
+                        }
+                    });
+                }
+            }, 5000);
+
+            event.track.onmute = () => this.logger.warn('Track muted:', event.track.id);
+            event.track.onunmute = () => this.logger.info('Track unmuted:', event.track.id);
+            event.track.onended = () => this.logger.warn('Track ended:', event.track.id);
+        };
+
+        // SDP negotiation
+        await this.peerConnection.setRemoteDescription(
+            new RTCSessionDescription({
+                type: 'offer',
+                sdp: offerSdp,
+            })
+        );
+
+        const answer = await this.peerConnection.createAnswer();
+        this.logger.info('Answer:', answer);
+        await this.peerConnection.setLocalDescription(answer);
+        this.logger.info('Local Description:', this.peerConnection.localDescription);
+        await this.startSession(answer.sdp || '');
+        this.logger.info('WebRTC peer connection established with HeyGen.');
+
     } catch (error) {
-      this.logger.error(`Error setting up peer connection: ${(error as Error).message}`);
-      throw error;
+        this.logger.error(`Error setting up peer connection: ${(error as Error).message}`);
+        throw error;
     }
-  }
-  
+}
 
    /**
    * Starts the session with HeyGen by sending the SDP answer.
@@ -188,6 +304,16 @@ export class HeyGenAvatar {
       this.logger.error(`Error starting session: ${(error as Error).message}`);
       throw error;
     }
+  }
+
+
+  private async processPendingTracks() {
+    for (const { track, mediaSection } of this.pendingTracks) {
+      const rtpParameters = this.mediasoupServer.getRtpParameters(mediaSection);
+      await this.mediasoupServer.createProducer(track, rtpParameters);
+    }
+    // Clear the queue after processing
+    this.pendingTracks = [];
   }
 
 
@@ -289,5 +415,60 @@ export class HeyGenAvatar {
       // Handle the error as needed
     }
   }    
+
+  private async monitorRtpStats() {
+    if (!this.peerConnection) {
+        this.logger.warn('No peer connection available for stats monitoring');
+        return;
+    }
+
+    try {
+        const stats = await this.peerConnection.getStats();
+        let hasIncomingPackets = false;
+
+        stats.forEach(report => {
+            switch(report.type) {
+                case 'inbound-rtp':
+                    hasIncomingPackets = true;
+                    this.logger.info('Inbound RTP Stats:', {
+                        kind: report.kind,
+                        packetsReceived: report.packetsReceived,
+                        bytesReceived: report.bytesReceived,
+                        packetsLost: report.packetsLost,
+                        jitter: report.jitter
+                    });
+                    break;
+                    
+                case 'track':
+                    if (report.kind === 'video') {
+                        this.logger.info('Video Track Stats:', {
+                            frameWidth: report.frameWidth,
+                            frameHeight: report.frameHeight,
+                            framesPerSecond: report.framesPerSecond,
+                            framesReceived: report.framesReceived,
+                            framesDropped: report.framesDropped
+                        });
+                    }
+                    break;
+
+                case 'codec':
+                    this.logger.debug('Codec Stats:', {
+                        payloadType: report.payloadType,
+                        codecType: report.codecType,
+                        mimeType: report.mimeType,
+                        clockRate: report.clockRate,
+                        channels: report.channels
+                    });
+                    break;
+            }
+        });
+
+        if (!hasIncomingPackets) {
+            this.logger.warn('No incoming RTP packets detected');
+        }
+    } catch (error) {
+        this.logger.error('Error getting RTP stats:', error);
+    }
+}
 
 }
