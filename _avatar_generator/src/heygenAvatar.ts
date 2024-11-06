@@ -471,4 +471,8 @@ export class HeyGenAvatar {
     }
 }
 
+  async startStream(): Promise<void> {
+    await this.createNewSession();
+  }
+
 }
