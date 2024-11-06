@@ -5,3 +5,8 @@
 /*/docs
 /*/tmp
 /*/logs
+.env
+_avatar_generator/.env
+package-lock.json
+*/recordings/*
+!*/recordings/.gitkeep
